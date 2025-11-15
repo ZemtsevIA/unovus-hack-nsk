@@ -6,7 +6,7 @@ import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
 import { Logo } from "./Logo";
 import { Leaf, Building2, Calendar, CheckCircle, Award, BookOpen } from "./Icons";
 import { ThemeToggle } from "./ThemeToggle";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Select,
   SelectContent,
@@ -24,13 +24,18 @@ interface RegistrationData {
   password: string;
   confirmPassword: string;
   department: string;
-  userRole: 'employee' | 'hr';
+  userRole: string;
   lastVacation: string;
   hireDate: string;
   lastSickLeave: string;
   participatedInCorporateActivities: boolean;
   hasCertificate: boolean;
   completedTraining: boolean;
+}
+
+interface Role {
+  id: number;
+  name: string;
 }
 
 const departmentOptions = [
@@ -42,6 +47,8 @@ const departmentOptions = [
   "HR"
 ];
 
+const API_BASE_URL = 'http://localhost:8000'; // Замените на реальный URL backend
+
 export function Login({ onLogin }: LoginProps) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [registrationStep, setRegistrationStep] = useState<1 | 2>(1);
@@ -49,7 +56,6 @@ export function Login({ onLogin }: LoginProps) {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   
-  // Registration questionnaire data
   const [registrationData, setRegistrationData] = useState<RegistrationData>({
     email: "",
     password: "",
@@ -64,51 +70,228 @@ export function Login({ onLogin }: LoginProps) {
     completedTraining: false
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (mode === 'login') {
-      // Simple demo logic: use selected role or infer from email
-      const userRole = email.toLowerCase().includes('hr') ? 'hr' : 'employee';
-      onLogin(email, userRole);
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [newUserId, setNewUserId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (mode === 'register' && registrationStep === 2) {
+      fetchRoles();
+    }
+  }, [mode, registrationStep]);
+
+  const fetchRoles = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/roles/`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to fetch roles: ${response.statusText}`);
+      }
+      const data: Role[] = await response.json();
+      setRoles(data);
+    } catch (err: any) {
+      setError(`Ошибка загрузки ролей: ${err.message}`);
+      console.error(err);
     }
   };
 
-  const handleStep1Submit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
+    
+    if (mode === 'login') {
+      try {
+        const response = await fetch(`${API_BASE_URL}/users/login`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({
+            username: email,
+            password: password,
+          }),
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(`Login failed: ${errorData.detail || 'Unknown error'}`);
+        }
+        
+        const { access_token, refresh_token } = await response.json();
+        localStorage.setItem('access_token', access_token);
+        localStorage.setItem('refresh_token', refresh_token);
+        
+        const userResponse = await fetch(`${API_BASE_URL}/users/me`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${access_token}`,
+          },
+        });
+        
+        if (!userResponse.ok) {
+          const errorData = await userResponse.json();
+          throw new Error(`Failed to fetch user info: ${errorData.detail || 'Unknown error'}`);
+        }
+        
+        const userData = await userResponse.json();
+        
+        if (!userData.role_id) {
+          throw new Error('User role_id is missing');
+        }
+        
+        const roleResponse = await fetch(`${API_BASE_URL}/roles/${userData.role_id}`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${access_token}`,
+          },
+        });
+        
+        if (!roleResponse.ok) {
+          const errorData = await roleResponse.json();
+          throw new Error(`Failed to fetch role: ${errorData.detail || 'Unknown error'}`);
+        }
+        
+        const roleData = await roleResponse.json();
+        
+        if (!roleData || !roleData.name) {
+          throw new Error('Role data is missing or invalid');
+        }
+        
+        const userRole: 'employee' | 'hr' = roleData.name.toLowerCase().includes('hr') ? 'hr' : 'employee';
+        
+        onLogin(email, userRole);
+      } catch (err: any) {
+        setError(`Ошибка авторизации: ${err.message}`);
+        console.error('Login error:', err);
+      }
+    }
+  };
+
+  const handleStep1Submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
     
     if (password !== confirmPassword) {
-      alert('Пароли не совпадают');
+      setError('Пароли не совпадают');
       return;
     }
     
     if (password.length < 6) {
-      alert('Пароль должен содержать минимум 6 символов');
+      setError('Пароль должен содержать минимум 6 символов');
       return;
     }
     
-    // Save step 1 data and move to step 2
-    setRegistrationData({
-      ...registrationData,
-      email,
-      password,
-      confirmPassword
-    });
-    setRegistrationStep(2);
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/register`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email,
+          password,
+          password_confirm: confirmPassword,
+          username: null,
+        }),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(`Registration failed: ${errorData.detail || 'Unknown error'}`);
+      }
+      
+      const userData = await response.json();
+      setNewUserId(userData.id);
+      
+      setRegistrationData({
+        ...registrationData,
+        email,
+        password,
+        confirmPassword
+      });
+      setRegistrationStep(2);
+    } catch (err: any) {
+      setError(`Ошибка регистрации: ${err.message}`);
+      console.error('Registration error:', err);
+    }
   };
 
-  const handleStep2Submit = (e: React.FormEvent) => {
+  const handleStep2Submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
     
-    // Validate questionnaire
     if (!registrationData.department || !registrationData.userRole || !registrationData.hireDate) {
-      alert('Пожалуйста, заполните все обязательные поля');
+      setError('Пожалуйста, заполните все обязательные поля');
       return;
     }
     
-    // Complete registration
-    console.log('Registration completed:', registrationData);
-    onLogin(email, registrationData.userRole);
+    if (newUserId === null) {
+      setError('Ошибка: ID пользователя не найден');
+      return;
+    }
+    
+    const selectedRole = roles.find(role => role.name.toLowerCase() === registrationData.userRole.toLowerCase());
+    if (!selectedRole) {
+      setError('Ошибка: Роль не найдена');
+      return;
+    }
+    
+    try {
+      const loginResponse = await fetch(`${API_BASE_URL}/users/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          username: registrationData.email,
+          password: registrationData.password,
+        }),
+      });
+      
+      if (!loginResponse.ok) {
+        const errorData = await loginResponse.json();
+        throw new Error(`Auto-login failed: ${errorData.detail || 'Unknown error'}`);
+      }
+      
+      const { access_token } = await loginResponse.json();
+      localStorage.setItem('access_token', access_token);
+      
+      const updateResponse = await fetch(`${API_BASE_URL}/users/${newUserId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${access_token}`,
+        },
+        body: JSON.stringify({
+          email: registrationData.email,
+          department: registrationData.department,
+          role_id: selectedRole.id,
+          employment_at: registrationData.hireDate ? `${registrationData.hireDate}T00:00:00` : null,
+          last_vacation_at: registrationData.lastVacation ? `${registrationData.lastVacation}T00:00:00` : null,
+          last_sickness_at: registrationData.lastSickLeave ? `${registrationData.lastSickLeave}T00:00:00` : null,
+          is_participant_corp_activities: registrationData.participatedInCorporateActivities,
+          is_certified: registrationData.hasCertificate,
+          is_trained: registrationData.completedTraining,
+          username: null,
+        }),
+      });
+      
+      if (!updateResponse.ok) {
+        const errorData = await updateResponse.json();
+        throw new Error(`Update failed: ${errorData.detail || 'Unknown error'}`);
+      }
+      
+      console.log('Registration completed');
+      const normalizedRole: 'employee' | 'hr' = registrationData.userRole.toLowerCase().includes('hr') ? 'hr' : 'employee';
+      onLogin(registrationData.email, normalizedRole);
+    } catch (err: any) {
+      setError(`Ошибка завершения регистрации: ${err.message}`);
+      console.error('Registration step 2 error:', err);
+    }
   };
 
   const handleBackToStep1 = () => {
@@ -117,7 +300,6 @@ export function Login({ onLogin }: LoginProps) {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-6 relative">
-      {/* Theme Toggle - Top Right Corner */}
       <div className="absolute top-6 right-6">
         <ThemeToggle />
       </div>
@@ -138,7 +320,12 @@ export function Login({ onLogin }: LoginProps) {
           </div>
         </CardHeader>
         <CardContent>
-          {/* Toggle between Login and Register */}
+          {error && (
+            <div className="mb-4 p-3 bg-destructive/10 border border-destructive text-destructive rounded-lg">
+              {error}
+            </div>
+          )}
+
           <div className="flex gap-2 mb-6 p-1 bg-muted rounded-lg">
             <Button
               type="button"
@@ -164,7 +351,6 @@ export function Login({ onLogin }: LoginProps) {
             </Button>
           </div>
 
-          {/* Step Indicator for Registration */}
           {mode === 'register' && (
             <div className="mb-6">
               <div className="flex items-center gap-2">
@@ -180,7 +366,6 @@ export function Login({ onLogin }: LoginProps) {
             </div>
           )}
 
-          {/* LOGIN FORM */}
           {mode === 'login' && (
             <form onSubmit={handleSubmit} className="space-y-5">
               <div className="space-y-2">
@@ -219,7 +404,6 @@ export function Login({ onLogin }: LoginProps) {
             </form>
           )}
 
-          {/* REGISTRATION STEP 1: Credentials */}
           {mode === 'register' && registrationStep === 1 && (
             <form onSubmit={handleStep1Submit} className="space-y-5">
               <div className="space-y-2">
@@ -268,7 +452,6 @@ export function Login({ onLogin }: LoginProps) {
             </form>
           )}
 
-          {/* REGISTRATION STEP 2: Questionnaire */}
           {mode === 'register' && registrationStep === 2 && (
             <form onSubmit={handleStep2Submit} className="space-y-5">
               <div className="space-y-3">
@@ -276,19 +459,15 @@ export function Login({ onLogin }: LoginProps) {
                   <Award className="w-4 h-4 text-primary" />
                   Роль <span className="text-destructive">*</span>
                 </Label>
-                <RadioGroup value={registrationData.userRole} onValueChange={(value) => setRegistrationData({ ...registrationData, userRole: value as 'employee' | 'hr' })}>
-                  <div className="flex items-center space-x-2 p-3 border border-border rounded-lg hover:bg-accent/50 transition-colors">
-                    <RadioGroupItem value="employee" id="employee-step2" />
-                    <Label htmlFor="employee-step2" className="cursor-pointer flex-1">
-                      Сотрудник
-                    </Label>
-                  </div>
-                  <div className="flex items-center space-x-2 p-3 border border-border rounded-lg hover:bg-accent/50 transition-colors">
-                    <RadioGroupItem value="hr" id="hr-step2" />
-                    <Label htmlFor="hr-step2" className="cursor-pointer flex-1">
-                      HR-специалист
-                    </Label>
-                  </div>
+                <RadioGroup value={registrationData.userRole} onValueChange={(value) => setRegistrationData({ ...registrationData, userRole: value })}>
+                  {roles.map((role) => (
+                    <div key={role.id} className="flex items-center space-x-2 p-3 border border-border rounded-lg hover:bg-accent/50 transition-colors">
+                      <RadioGroupItem value={role.name} id={`role-${role.id}`} />
+                      <Label htmlFor={`role-${role.id}`} className="cursor-pointer flex-1">
+                        {role.name}
+                      </Label>
+                    </div>
+                  ))}
                 </RadioGroup>
               </div>
 
