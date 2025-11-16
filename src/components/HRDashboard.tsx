@@ -20,7 +20,7 @@ import {
   Trash2,
   Edit
 } from "./Icons";
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -36,6 +36,10 @@ import {
   SelectValue,
 } from "./ui/select";
 
+import {
+  Badge
+} from "./ui/badge";
+
 interface HRDashboardProps {
   onLogout: () => void;
 }
@@ -50,616 +54,716 @@ interface Employee {
   lastAssessment: string;
 }
 
-// Mock data
-const trendData = [
-  { month: "Янв", risk: 28, average: 72 },
-  { month: "Фев", risk: 32, average: 68 },
-  { month: "Мар", risk: 35, average: 65 },
-  { month: "Апр", risk: 30, average: 70 },
-  { month: "Май", risk: 25, average: 75 },
-  { month: "Июн", risk: 22, average: 78 },
-];
-
-const departmentData = [
-  { department: "Инженерия", score: 72, employees: 45, burnedOut: 3, trend: 5, kpi: 87 },
-  { department: "Продажи", score: 65, employees: 32, burnedOut: 5, trend: -2, kpi: 78 },
-  { department: "Маркетинг", score: 78, employees: 28, burnedOut: 1, trend: 8, kpi: 92 },
-  { department: "Поддержка", score: 58, employees: 38, burnedOut: 8, trend: -3, kpi: 65 },
-  { department: "Продукт", score: 75, employees: 22, burnedOut: 2, trend: 4, kpi: 85 },
-  { department: "HR", score: 82, employees: 15, burnedOut: 0, trend: 3, kpi: 95 },
-];
-
-const riskDistribution = [
-  { name: "Равновесие", value: 58, color: "#2d8659", description: "70-100 баллов" },
-  { name: "Напряжённость", value: 21, color: "#eab308", description: "50-69 баллов" },
-  { name: "Истощение", value: 13, color: "#f97316", description: "30-49 баллов" },
-  { name: "Бессилие", value: 8, color: "#dc2626", description: "0-29 баллов" },
-];
-
-const employeeData: Employee[] = [
-  { id: 1, name: "Сара Джонсон", email: "sara.johnson@example.com", department: "Инженерия", score: 85, status: "low", lastAssessment: "2024-11-10" },
-  { id: 2, name: "Майкл Чен", email: "michael.chen@example.com", department: "Продажи", score: 62, status: "medium", lastAssessment: "2024-11-12" },
-  { id: 3, name: "Эмили Родригес", email: "emily.rodrigues@example.com", department: "Маркетинг", score: 78, status: "low", lastAssessment: "2024-11-09" },
-  { id: 4, name: "Джеймс Уильямс", email: "james.williams@example.com", department: "Поддержка", score: 45, status: "high", lastAssessment: "2024-11-11" },
-  { id: 5, name: "Лиза Андерсон", email: "lisa.anderson@example.com", department: "Инженерия", score: 72, status: "low", lastAssessment: "2024-11-13" },
-  { id: 6, name: "Дэвид Мартинес", email: "david.martinez@example.com", department: "Продукт", score: 58, status: "medium", lastAssessment: "2024-11-08" },
-  { id: 7, name: "Дженнифер Тейлор", email: "jennifer.taylor@example.com", department: "Поддержка", score: 38, status: "high", lastAssessment: "2024-11-10" },
-  { id: 8, name: "Роберт Браун", email: "robert.brown@example.com", department: "Продажи", score: 68, status: "medium", lastAssessment: "2024-11-14" },
-  { id: 9, name: "Аманда Уайт", email: "amanda.white@example.com", department: "Маркетинг", score: 82, status: "low", lastAssessment: "2024-11-12" },
-  { id: 10, name: "Кристофер Ли", email: "christopher.li@example.com", department: "Инженерия", score: 55, status: "medium", lastAssessment: "2024-11-09" },
-];
+const API_BASE_URL = 'http://localhost:8000';
 
 export function HRDashboard({ onLogout }: HRDashboardProps) {
   const departmentSectionRef = useRef<HTMLDivElement>(null);
-  const [employees, setEmployees] = useState<Employee[]>(employeeData);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [showAddEmployeeModal, setShowAddEmployeeModal] = useState(false);
+  const [showEditEmployeeModal, setShowEditEmployeeModal] = useState(false);
   const [departmentSearch, setDepartmentSearch] = useState("");
   const [newEmployee, setNewEmployee] = useState({
-    name: "",
-    email: "",
-    department: ""
+    email: ""
   });
+  const [editEmployee, setEditEmployee] = useState<Employee | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [currentHRId, setCurrentHRId] = useState<number | null>(null);
+  const [roles, setRoles] = useState<any[]>([]);
+  const [trendData, setTrendData] = useState<any[]>([]);
+  const [departmentData, setDepartmentData] = useState<any[]>([]);
+  const [riskDistribution, setRiskDistribution] = useState<any[]>([]);
 
   const scrollToDepartments = () => {
     departmentSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
-  const handleAddEmployee = () => {
-    if (!newEmployee.name || !newEmployee.email || !newEmployee.department) {
+  const fetchEmployees = async (token: string) => {
+    try {
+      const employeesRes = await fetch(`${API_BASE_URL}/users/hr/employees`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!employeesRes.ok) throw new Error('Failed to fetch employees');
+      const employeesData = await employeesRes.json();
+
+      const employeePromises = employeesData.map(async (emp: any) => {
+        const metricsRes = await fetch(`${API_BASE_URL}/metrics/by_user/${emp.id}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const metricsData = metricsRes.ok ? await metricsRes.json() : [];
+        const lastMetric = metricsData.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+
+        let score = 0;
+        let status = 'high';
+        let lastAssessment = 'Не пройдена';
+
+        if (lastMetric) {
+          score = lastMetric.total_score;
+          lastAssessment = new Date(lastMetric.created_at).toLocaleDateString('ru-RU');
+          if (score >= 70) status = 'low';
+          else if (score >= 50) status = 'medium';
+          else status = 'high';
+        }
+
+        return {
+          id: emp.id,
+          name: emp.username || emp.email.split('@')[0].split('.').map((n: string) => n.charAt(0).toUpperCase() + n.slice(1)).join(' '),
+          email: emp.email,
+          department: emp.department || 'Не указан',
+          score,
+          status,
+          lastAssessment
+        };
+      });
+
+      const processedEmployees = await Promise.all(employeePromises);
+      setEmployees(processedEmployees);
+
+      // Aggregate department data
+      const departmentsMap: { [key: string]: any } = {};
+      employeesData.forEach((emp: any) => {
+        const dept = emp.department || 'Не указан';
+        if (!departmentsMap[dept]) {
+          departmentsMap[dept] = {
+            department: dept,
+            score: 0,
+            employees: 0,
+            burnedOut: 0,
+            trend: 0,
+            kpi: 0
+          };
+        }
+        departmentsMap[dept].employees += 1;
+      });
+
+      const departmentPromises = Object.keys(departmentsMap).map(async (dept) => {
+        const deptEmployees = employeesData.filter((emp: any) => (emp.department || 'Не указан') === dept);
+        let totalScore = 0;
+        let burnedOut = 0;
+        let totalKPI = 0;
+        let trend = 0;
+
+        for (const emp of deptEmployees) {
+          const metricsRes = await fetch(`${API_BASE_URL}/metrics/by_user/${emp.id}`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          const metrics = metricsRes.ok ? await metricsRes.json() : [];
+          const lastTwo = metrics.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 2);
+          const lastScore = lastTwo[0]?.total_score || 0;
+          const prevScore = lastTwo[1]?.total_score || lastScore;
+          totalScore += lastScore;
+          if (lastScore < 50) burnedOut += 1;
+          trend += (lastScore - prevScore);
+
+          const kpiRes = await fetch(`${API_BASE_URL}/kpis/by_user/${emp.id}`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          const kpis = kpiRes.ok ? await kpiRes.json() : [];
+          const lastKPI = kpis.sort((a: any, b: any) => new Date(b.registered_at).getTime() - new Date(a.registered_at).getTime())[0]?.kpi_rate || 0;
+          totalKPI += lastKPI;
+        }
+
+        departmentsMap[dept].score = deptEmployees.length > 0 ? Math.round(totalScore / deptEmployees.length) : 0;
+        departmentsMap[dept].burnedOut = burnedOut;
+        departmentsMap[dept].trend = deptEmployees.length > 0 ? Math.round(trend / deptEmployees.length) : 0;
+        departmentsMap[dept].kpi = deptEmployees.length > 0 ? Math.round(totalKPI / deptEmployees.length) : 0;
+      });
+
+      await Promise.all(departmentPromises);
+      setDepartmentData(Object.values(departmentsMap));
+
+      // Calculate riskDistribution
+      const risks = [0, 0, 0, 0]; // [70-100, 50-69, 30-49, 0-29]
+      const riskPromises = employeesData.map(async (emp: any) => {
+        const metricsRes = await fetch(`${API_BASE_URL}/metrics/by_user/${emp.id}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const metrics = metricsRes.ok ? await metricsRes.json() : [];
+        const lastScore = metrics.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]?.total_score || 0;
+        if (lastScore >= 70) risks[0]++;
+        else if (lastScore >= 50) risks[1]++;
+        else if (lastScore >= 30) risks[2]++;
+        else risks[3]++;
+      });
+      await Promise.all(riskPromises);
+      const total = employeesData.length;
+      setRiskDistribution([
+        { name: "Равновесие", value: total > 0 ? Math.round((risks[0] / total) * 100) : 0, color: "#2d8659", description: "70-100 баллов" },
+        { name: "Напряжённость", value: total > 0 ? Math.round((risks[1] / total) * 100) : 0, color: "#eab308", description: "50-69 баллов" },
+        { name: "Истощение", value: total > 0 ? Math.round((risks[2] / total) * 100) : 0, color: "#f97316", description: "30-49 баллов" },
+        { name: "Бессилие", value: total > 0 ? Math.round((risks[3] / total) * 100) : 0, color: "#dc2626", description: "0-29 баллов" },
+      ]);
+
+      // Trend data: Aggregate monthly averages and risks
+      const monthlyMap: { [key: string]: { totalScore: number, count: number, burnedOut: number } } = {};
+      const trendPromises = employeesData.map(async (emp: any) => {
+        const metricsRes = await fetch(`${API_BASE_URL}/metrics/by_user/${emp.id}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const metrics = metricsRes.ok ? await metricsRes.json() : [];
+        metrics.forEach((m: any) => {
+          const date = new Date(m.created_at);
+          const monthKey = date.toLocaleString('ru-RU', { month: 'short' });
+          if (!monthlyMap[monthKey]) {
+            monthlyMap[monthKey] = { totalScore: 0, count: 0, burnedOut: 0 };
+          }
+          monthlyMap[monthKey].totalScore += m.total_score;
+          monthlyMap[monthKey].count += 1;
+          if (m.total_score < 50) monthlyMap[monthKey].burnedOut += 1;
+        });
+      });
+      await Promise.all(trendPromises);
+
+      const trends = Object.keys(monthlyMap).map(month => ({
+        month,
+        average: monthlyMap[month].count > 0 ? Math.round(monthlyMap[month].totalScore / monthlyMap[month].count) : 0,
+        risk: monthlyMap[month].count > 0 ? Math.round((monthlyMap[month].burnedOut / monthlyMap[month].count) * 100) : 0
+      })).sort((a, b) => new Date(`2024-${a.month}-01`).getTime() - new Date(`2024-${b.month}-01`).getTime()); // Sort by month
+
+      setTrendData(trends);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const token = localStorage.getItem('access_token');
+      if (!token) {
+        setError('No access token found. Please login again.');
+        setLoading(false);
+        return;
+      }
+
+      try {
+        // Fetch current HR
+        const hrRes = await fetch(`${API_BASE_URL}/users/me`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!hrRes.ok) throw new Error('Failed to fetch HR data');
+        const hrData = await hrRes.json();
+        setCurrentHRId(hrData.id);
+
+        // Fetch roles
+        const rolesRes = await fetch(`${API_BASE_URL}/roles/`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!rolesRes.ok) throw new Error('Failed to fetch roles');
+        setRoles(await rolesRes.json());
+
+        await fetchEmployees(token);
+      } catch (err: any) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  const handleAddEmployee = async () => {
+    if (!newEmployee.email) {
       return;
     }
 
-    const employee: Employee = {
-      id: employees.length + 1,
-      name: newEmployee.name,
-      email: newEmployee.email,
-      department: newEmployee.department,
-      score: 0,
-      status: "low",
-      lastAssessment: "Не пройдена"
-    };
+    const token = localStorage.getItem('access_token');
+    if (!token) {
+      setError('No access token found.');
+      return;
+    }
 
-    setEmployees([...employees, employee]);
-    setNewEmployee({ name: "", email: "", department: "" });
-    setShowAddEmployeeModal(false);
+    try {
+      // Generate temporary password
+      const tempPassword = Math.random().toString(36).slice(-8);
+
+      // Generate username from email
+      const username = newEmployee.email.split('@')[0].split('.').map((n: string) => n.charAt(0).toUpperCase() + n.slice(1)).join(' ');
+
+      // Register new user
+      const registerRes = await fetch(`${API_BASE_URL}/users/hr/employees/by_email?email=${newEmployee.email}`, {
+        
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          email: newEmployee.email,
+          password: tempPassword,
+          password_confirm: tempPassword,
+          username: username
+        })
+      });
+      if (!registerRes.ok) throw new Error('Failed to register employee');
+      const newUser = await registerRes.json();
+
+      // Find employee role id
+      const employeeRole = roles.find((r: any) => r.name.toLowerCase().includes('employee'));
+      if (!employeeRole) throw new Error('Employee role not found');
+
+      // Update user with role, hr_id, username (department null)
+      const updateRes = await fetch(`${API_BASE_URL}/users/${newUser.id}`, {
+        method: 'PUT',
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}` 
+        },
+        body: JSON.stringify({
+          role_id: employeeRole.id,
+          hr_id: currentHRId,
+          username: username,
+          department: null  // or '' if needed
+        })
+      });
+      if (!updateRes.ok) throw new Error('Failed to update employee');
+
+      // Assign to HR
+      const assignRes = await fetch(`${API_BASE_URL}/users/hr/employees`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}` 
+        },
+        body: JSON.stringify([newUser.id])
+      });
+      if (!assignRes.ok) throw new Error('Failed to assign employee to HR');
+
+      // Refresh data
+      await fetchEmployees(token);
+
+      setNewEmployee({ email: "" });
+      setShowAddEmployeeModal(false);
+
+      // In real app, send email with tempPassword
+      console.log(`Temporary password for ${newEmployee.email}: ${tempPassword}`);
+    } catch (err: any) {
+      setError(err.message);
+    }
   };
 
-  const handleDeleteEmployee = (id: number) => {
-    setEmployees(employees.filter(emp => emp.id !== id));
+  const handleEditEmployee = async () => {
+    if (!editEmployee) return;
+
+    const token = localStorage.getItem('access_token');
+    if (!token) {
+      setError('No access token found.');
+      return;
+    }
+
+    try {
+      const updateRes = await fetch(`${API_BASE_URL}/users/${editEmployee.id}`, {
+        method: 'PUT',
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}` 
+        },
+        body: JSON.stringify({
+          department: editEmployee.department,
+          username: editEmployee.name,
+          email: editEmployee.email
+        })
+      });
+      if (!updateRes.ok) throw new Error('Failed to update employee');
+
+      await fetchEmployees(token);
+      setShowEditEmployeeModal(false);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const handleDeleteEmployee = async (id: number) => {
+    const token = localStorage.getItem('access_token');
+    if (!token) {
+      setError('No access token found.');
+      return;
+    }
+
+    try {
+      const deleteRes = await fetch(`${API_BASE_URL}/users/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!deleteRes.ok) throw new Error('Failed to delete employee');
+
+      await fetchEmployees(token);
+    } catch (err: any) {
+      setError(err.message);
+    }
   };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case "high":
-        return <span className="px-2 py-1 text-xs rounded-full bg-destructive/10 text-destructive border border-destructive/20">Высокий риск</span>;
-      case "medium":
-        return <span className="px-2 py-1 text-xs rounded-full bg-warning/10 text-warning border border-warning/20">Средний риск</span>;
-      case "low":
-        return <span className="px-2 py-1 text-xs rounded-full bg-primary/10 text-primary border border-primary/20">Низкий риск</span>;
+      case 'low':
+        return <Badge variant="default" className="bg-success/10 text-success">Низкий риск</Badge>;
+      case 'medium':
+        return <Badge variant="default" className="bg-warning/10 text-warning">Средний риск</Badge>;
+      case 'high':
+        return <Badge variant="default" className="bg-destructive/10 text-destructive">Высокий риск</Badge>;
       default:
-        return <span className="px-2 py-1 text-xs rounded-full bg-muted text-muted-foreground border border-border">Не оценен</span>;
+        return <Badge variant="outline">Неизвестно</Badge>;
     }
   };
 
-  const highRiskCount = employees.filter(e => e.status === "high").length;
-  const averageScore = employees.length > 0 
-    ? Math.round(employees.reduce((sum, e) => sum + e.score, 0) / employees.length) 
-    : 0;
+  const filteredEmployees = employees.filter(emp => 
+    !departmentSearch || emp.department.toLowerCase().includes(departmentSearch.toLowerCase())
+  );
+
+  const sortedEmployees = [...filteredEmployees].sort((a, b) => a.score - b.score);
+
+  const totalEmployees = employees.length;
+  const averageScore = totalEmployees > 0 ? Math.round(employees.reduce((sum, emp) => sum + emp.score, 0) / totalEmployees) : 0;
+  const atRiskEmployees = employees.filter(emp => emp.score < 50).length;
+  const burnoutPercentage = totalEmployees > 0 ? Math.round((atRiskEmployees / totalEmployees) * 100) : 0;
+
+  if (loading) {
+    return <div className="flex items-center justify-center min-h-screen">Загрузка данных...</div>;
+  }
+
+  if (error) {
+    return <div className="flex items-center justify-center min-h-screen text-destructive">{error}</div>;
+  }
 
   return (
     <>
-      <div className="min-h-screen bg-background">
-        <header className="border-b border-border bg-card sticky top-0 z-40">
-          <div className="max-w-[1600px] mx-auto px-6 py-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Logo className="w-10 h-10" />
-              <div>
-                <h1>Панель аналитики HR</h1>
-                <p className="text-xs text-muted-foreground">Обзор благополучия сотрудников</p>
+      <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-md border-b border-border">
+        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Logo className="w-8 h-8" />
+            <h1 className="text-xl font-bold">HR Дашборд</h1>
+          </div>
+          <div className="flex items-center gap-4">
+            <ThemeToggle />
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={onLogout}
+              className="gap-2"
+            >
+              <LogOut className="w-4 h-4" />
+              Выйти
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-6 py-8 space-y-12">
+        {/* Overview */}
+        <Card className="shadow-xl">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="w-5 h-5 text-primary" />
+              Обзор благополучия команды
+            </CardTitle>
+            <CardDescription>Ключевые метрики за последний месяц</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Users className="w-4 h-4" />
+                    Всего сотрудников
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-3xl font-bold">{totalEmployees}</p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Heart className="w-4 h-4" />
+                    Средний балл благополучия
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-3xl font-bold">{averageScore}</p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4" />
+                    В зоне риска
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-3xl font-bold">{atRiskEmployees}</p>
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="mt-8 pt-6 border-t border-border">
+              <h3 className="mb-4 flex items-center gap-2 font-medium">
+                <TrendingUp className="w-4 h-4 text-primary" />
+                Тренды благополучия
+              </h3>
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+                {trendData.map((item, index) => (
+                  <div key={index} className="flex flex-col items-center p-3 rounded-lg border border-border hover:bg-accent/50 transition-colors">
+                    <span className="text-sm font-medium mb-2">{item.month}</span>
+                    <Badge variant="outline" className="mb-1">
+                      {item.average}
+                    </Badge>
+                    <span className="text-xs text-destructive">{item.risk}% в риске</span>
+                  </div>
+                ))}
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              <ThemeToggle />
-              <Button variant="outline">
-                <Download className="w-4 h-4 mr-2" />
-                Экспорт отчёта
-              </Button>
-              <Button variant="ghost" onClick={onLogout}>
-                <LogOut className="w-4 h-4 mr-2" />
-                Выйти
-              </Button>
+
+            <div className="mt-8 pt-6 border-t border-border">
+              <h3 className="mb-4 flex items-center gap-2 font-medium">
+                <AlertTriangle className="w-4 h-4 text-primary" />
+                Распределение рисков
+              </h3>
+              <div className="space-y-4">
+                {riskDistribution.map((risk, index) => (
+                  <div key={index} className="flex items-center gap-4">
+                    <div className="w-32 text-sm font-medium truncate">{risk.name}</div>
+                    <div className="flex-1 h-2 rounded-full overflow-hidden bg-muted">
+                      <div 
+                        className="h-full rounded-full transition-all"
+                        style={{ width: `${risk.value}%`, backgroundColor: risk.color }}
+                      />
+                    </div>
+                    <span className="w-12 text-sm text-muted-foreground">{risk.value}%</span>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        </header>
+          </CardContent>
+        </Card>
 
-        <main className="max-w-[1600px] mx-auto px-6 py-8 pb-32">
-          {/* KPI Cards - Interactive Buttons */}
-          <div className="grid md:grid-cols-2 gap-6 mb-8">
-            <button
-              onClick={scrollToDepartments}
-              className="group text-left bg-card border-2 border-border rounded-lg shadow-lg p-6 hover:border-destructive hover:shadow-xl transition-all duration-300 cursor-pointer"
-            >
-              <div className="flex items-center justify-between">
+        {/* Departments */}
+        <div ref={departmentSectionRef}>
+          <Card className="shadow-xl">
+            <CardHeader>
+              <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
                 <div>
-                  <p className="text-sm text-muted-foreground mb-2">Сотрудники высокого риска</p>
-                  <p className="text-4xl text-destructive group-hover:scale-110 transition-transform duration-300">{highRiskCount}</p>
-                  <div className="flex items-center gap-2 mt-3">
-                    <AlertTriangle className="w-4 h-4 text-destructive" />
-                    <span className="text-xs text-muted-foreground">Требует внимания</span>
-                  </div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Building2 className="w-5 h-5 text-primary" />
+                    Отделы
+                  </CardTitle>
+                  <CardDescription>Анализ по отделам</CardDescription>
                 </div>
-                <div className="flex flex-col items-center gap-2">
-                  <div className="w-14 h-14 rounded-full bg-destructive/10 flex items-center justify-center group-hover:bg-destructive/20 transition-colors">
-                    <AlertTriangle className="w-7 h-7 text-destructive" />
-                  </div>
-                  <ArrowDown className="w-5 h-5 text-muted-foreground group-hover:text-destructive group-hover:translate-y-1 transition-all" />
-                </div>
-              </div>
-            </button>
-
-            <button
-              onClick={scrollToDepartments}
-              className="group text-left bg-card border-2 border-border rounded-lg shadow-lg p-6 hover:border-primary hover:shadow-xl transition-all duration-300 cursor-pointer"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground mb-2">Средняя оценка благополучия</p>
-                  <p className="text-4xl text-primary group-hover:scale-110 transition-transform duration-300">{averageScore}</p>
-                  <div className="flex items-center gap-2 mt-3">
-                    <TrendingUp className="w-4 h-4 text-primary" />
-                    <span className="text-xs text-primary">+5 от прошлого месяца</span>
-                  </div>
-                </div>
-                <div className="flex flex-col items-center gap-2">
-                  <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
-                    <Users className="w-7 h-7 text-primary" />
-                  </div>
-                  <ArrowDown className="w-5 h-5 text-muted-foreground group-hover:text-primary group-hover:translate-y-1 transition-all" />
-                </div>
-              </div>
-            </button>
-          </div>
-
-          {/* Charts */}
-          <div className="grid lg:grid-cols-3 gap-6 mb-8">
-            <Card className="lg:col-span-2 shadow-lg">
-              <CardHeader>
-                <CardTitle>Тренды риска выгорания</CardTitle>
-                <CardDescription>Ежемесячный риск выгорания и средняя оценка благополучия</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="flex items-end justify-between h-64 gap-2 px-4">
-                    {trendData.map((data, index) => (
-                      <div key={index} className="flex-1 flex flex-col items-center gap-3 h-full justify-end">
-                        <div className="w-full flex gap-1 items-end h-full relative">
-                          <div className="flex-1 flex flex-col items-center justify-end h-full">
-                            <span className="text-xs text-primary mb-1">{data.average}</span>
-                            <div 
-                              className="w-full bg-primary rounded-t transition-all hover:opacity-80"
-                              style={{ height: `${(data.average / 100) * 100}%` }}
-                              title={`Средняя: ${data.average}`}
-                            />
-                          </div>
-                          <div className="flex-1 flex flex-col items-center justify-end h-full">
-                            <span className="text-xs text-destructive mb-1">{data.risk}%</span>
-                            <div 
-                              className="w-full bg-destructive rounded-t transition-all hover:opacity-80"
-                              style={{ height: `${(data.risk / 100) * 100}%` }}
-                              title={`Риск: ${data.risk}%`}
-                            />
-                          </div>
-                        </div>
-                        <span className="text-xs text-muted-foreground">{data.month}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex items-center justify-center gap-6 pt-4 border-t border-border">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded bg-primary" />
-                      <span className="text-sm text-muted-foreground">Средняя оценка</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded bg-destructive" />
-                      <span className="text-sm text-muted-foreground">Риск выгорания %</span>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="shadow-lg">
-              <CardHeader>
-                <CardTitle>Распределение рисков</CardTitle>
-                <CardDescription>Четыре уровня благополучия сотрудников</CardDescription>
-              </CardHeader>
-              <CardContent className="py-8">
-                <div className="space-y-6">
-                  {riskDistribution.map((item, index) => (
-                    <div key={index} className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div 
-                            className="w-4 h-4 rounded-full flex-shrink-0" 
-                            style={{ backgroundColor: item.color }} 
-                          />
-                          <div className="flex flex-col">
-                            <span className="text-sm">{item.name}</span>
-                            <span className="text-xs text-muted-foreground">{item.description}</span>
-                          </div>
-                        </div>
-                        <span className="text-lg" style={{ color: item.color }}>
-                          {item.value}%
-                        </span>
-                      </div>
-                      <div className="h-3 bg-muted rounded-full overflow-hidden ml-7">
-                        <div 
-                          className="h-full rounded-full transition-all"
-                          style={{ 
-                            width: `${item.value}%`,
-                            backgroundColor: item.color 
-                          }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-8 pt-6 border-t border-border text-center">
-                  <p className="text-xs text-muted-foreground">
-                    Всего оценённых сотрудников: <span className="text-foreground">{employeeData.length}</span>
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          <div className="grid gap-6 mb-8" ref={departmentSectionRef}>
-            {/* Employee Statistics Overview */}
-            <Card className="shadow-lg">
-              <CardHeader>
-                <CardTitle>Статистика персонала</CardTitle>
-                <CardDescription>Общий обзор сотрудников компании</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-                  {/* Total Employees */}
-                  <div className="bg-muted/30 rounded-lg p-6 border border-border hover:border-primary/50 transition-all">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-                        <Users className="w-6 h-6 text-primary" />
-                      </div>
-                      <TrendingUp className="w-5 h-5 text-primary" />
-                    </div>
-                    <p className="text-3xl text-primary mb-1">{employees.length}</p>
-                    <p className="text-sm text-muted-foreground">Всего сотрудников</p>
-                    <div className="mt-3 pt-3 border-t border-border">
-                      <p className="text-xs text-primary">+{employees.filter(e => e.id > 5).length} за месяц</p>
-                    </div>
-                  </div>
-
-                  {/* By Department Breakdown */}
-                  <div className="bg-muted/30 rounded-lg p-6 border border-border hover:border-primary/50 transition-all">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-                        <Building2 className="w-6 h-6 text-primary" />
-                      </div>
-                      <Heart className="w-5 h-5 text-primary" />
-                    </div>
-                    <p className="text-3xl text-primary mb-1">{departmentData.length}</p>
-                    <p className="text-sm text-muted-foreground">Активных отделов</p>
-                    <div className="mt-3 pt-3 border-t border-border">
-                      <p className="text-xs text-muted-foreground">
-                        Средний размер: {Math.round(employees.length / departmentData.length)} чел.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* High Risk Employees */}
-                  <div className="bg-muted/30 rounded-lg p-6 border border-border hover:border-destructive/50 transition-all">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="w-12 h-12 rounded-full bg-destructive/10 flex items-center justify-center">
-                        <AlertTriangle className="w-6 h-6 text-destructive" />
-                      </div>
-                      <TrendingDown className="w-5 h-5 text-destructive" />
-                    </div>
-                    <p className="text-3xl text-destructive mb-1">{highRiskCount}</p>
-                    <p className="text-sm text-muted-foreground">Высокий риск</p>
-                    <div className="mt-3 pt-3 border-t border-border">
-                      <p className="text-xs text-destructive">
-                        {((highRiskCount / employees.length) * 100).toFixed(1)}% от общего числа
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Average Wellness Score */}
-                  <div className="bg-muted/30 rounded-lg p-6 border border-border hover:border-primary/50 transition-all">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-                        <Heart className="w-6 h-6 text-primary" />
-                      </div>
-                      <TrendingUp className="w-5 h-5 text-primary" />
-                    </div>
-                    <p className="text-3xl text-primary mb-1">{averageScore}</p>
-                    <p className="text-sm text-muted-foreground">Средний балл</p>
-                    <div className="mt-3 pt-3 border-t border-border">
-                      <div className="w-full bg-muted rounded-full h-2">
-                        <div 
-                          className="bg-primary h-2 rounded-full transition-all" 
-                          style={{ width: `${averageScore}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Department Distribution */}
-                <div className="mt-6 pt-6 border-t border-border">
-                  <h3 className="text-sm mb-4 text-muted-foreground">Распределение по отделам</h3>
-                  <div className="space-y-3">
-                    {departmentData.slice(0, 6).map((dept, index) => {
-                      const deptEmployees = employees.filter(e => e.department === dept.department);
-                      const percentage = ((deptEmployees.length / employees.length) * 100).toFixed(1);
-                      return (
-                        <div key={index} className="flex items-center gap-4">
-                          <div className="w-32 text-sm">{dept.department}</div>
-                          <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                            <div 
-                              className="h-full bg-primary rounded-full transition-all"
-                              style={{ width: `${percentage}%` }}
-                            />
-                          </div>
-                          <div className="w-20 text-right text-sm text-muted-foreground">
-                            {deptEmployees.length} ({percentage}%)
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Staff Management Section */}
-            <Card className="shadow-lg">
-              <CardHeader className="pb-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle>Управление персоналом</CardTitle>
-                    <CardDescription>Добавление и просмотр сотрудников компании</CardDescription>
-                  </div>
-                  <Button onClick={() => setShowAddEmployeeModal(true)} className="gap-2">
-                    <UserPlus className="w-4 h-4" />
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm">
+                    <Download className="w-4 h-4 mr-2" />
+                    Экспорт
+                  </Button>
+                  <Button size="sm" onClick={() => setShowAddEmployeeModal(true)}>
+                    <UserPlus className="w-4 h-4 mr-2" />
                     Добавить сотрудника
                   </Button>
                 </div>
-              </CardHeader>
-              <CardContent className="px-6 pb-6">
-                <div className="overflow-x-auto custom-scrollbar rounded-lg border border-border">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="bg-muted/50 border-b border-border">
-                        <th className="text-left py-4 px-6 font-medium text-sm text-muted-foreground">Сотрудник</th>
-                        <th className="text-left py-4 px-6 font-medium text-sm text-muted-foreground">Email</th>
-                        <th className="text-left py-4 px-6 font-medium text-sm text-muted-foreground">Отдел</th>
-                        <th className="text-center py-4 px-6 font-medium text-sm text-muted-foreground">Действия</th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-card">
-                      {employees.map((emp, index) => (
-                        <tr 
-                          key={emp.id} 
-                          className={`border-b border-border hover:bg-muted/30 transition-colors ${
-                            index === employees.length - 1 ? 'border-b-0' : ''
-                          }`}
-                        >
-                          <td className="py-4 px-6">
-                            <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                                <Users className="w-5 h-5 text-primary" />
-                              </div>
-                              <span className="font-medium">{emp.name}</span>
-                            </div>
-                          </td>
-                          <td className="py-4 px-6">
-                            <div className="flex items-center gap-2 text-muted-foreground">
-                              <Mail className="w-4 h-4 flex-shrink-0" />
-                              <span className="text-sm">{emp.email}</span>
-                            </div>
-                          </td>
-                          <td className="py-4 px-6">
-                            <div className="flex items-center gap-2">
-                              <Building2 className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                              <span>{emp.department}</span>
-                            </div>
-                          </td>
-                          <td className="py-4 px-6">
-                            <div className="flex items-center justify-center">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleDeleteEmployee(emp.id)}
-                                className="hover:bg-destructive/10 hover:text-destructive"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  
-                  {employees.length === 0 && (
-                    <div className="text-center py-16 bg-card">
-                      <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4 opacity-50" />
-                      <p className="text-muted-foreground mb-4">Сотрудники не найдены</p>
-                      <Button 
-                        variant="outline" 
-                        onClick={() => setShowAddEmployeeModal(true)}
-                        className="gap-2"
-                      >
-                        <UserPlus className="w-4 h-4" />
-                        Добавить первого сотрудника
-                      </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="mb-6">
+                <Input
+                  placeholder="Поиск по отделу..."
+                  value={departmentSearch}
+                  onChange={(e) => setDepartmentSearch(e.target.value)}
+                  className="max-w-md"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {departmentData
+                  .filter(dept => !departmentSearch || dept.department.toLowerCase().includes(departmentSearch.toLowerCase()))
+                  .map((dept, index) => (
+                    <Card key={index} className="overflow-hidden hover:shadow-md transition-shadow">
+                      <CardHeader className="pb-3">
+                        <div className="flex items-center justify-between">
+                          <CardTitle className="text-lg flex items-center gap-2">
+                            <Building2 className="w-5 h-5 text-primary" />
+                            {dept.department}
+                          </CardTitle>
+                          <Badge variant="outline">{dept.employees} чел.</Badge>
+                        </div>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        {/* Wellness Score */}
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-muted-foreground flex items-center gap-1.5">
+                            <Heart className="w-4 h-4" />
+                            Средний балл
+                          </span>
+                          <span className="font-medium">{dept.score}</span>
+                        </div>
+
+                        {/* Burned Out */}
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-muted-foreground flex items-center gap-1.5">
+                            <AlertTriangle className="w-4 h-4" />
+                            В зоне выгорания
+                          </span>
+                          <Badge variant={dept.burnedOut > 0 ? "destructive" : "default"}>
+                            {dept.burnedOut}
+                          </Badge>
+                        </div>
+
+                        {/* KPI */}
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-muted-foreground flex items-center gap-1.5">
+                            <TrendingUp className="w-4 h-4" />
+                            Средний KPI
+                          </span>
+                          <span className="font-medium">{dept.kpi}%</span>
+                        </div>
+
+                        {/* Monthly Trend */}
+                        <div className="flex items-center justify-between pt-2 border-t border-border">
+                          <span className="text-sm text-muted-foreground">Тенденция за месяц</span>
+                          <div className="flex items-center gap-1.5">
+                            {dept.trend > 0 ? (
+                              <>
+                                <TrendingUp className="w-4 h-4 text-primary" />
+                                <span className="text-sm text-primary">+{dept.trend}</span>
+                              </>
+                            ) : dept.trend < 0 ? (
+                              <>
+                                <TrendingDown className="w-4 h-4 text-destructive" />
+                                <span className="text-sm text-destructive">{dept.trend}</span>
+                              </>
+                            ) : (
+                              <span className="text-sm text-muted-foreground">0</span>
+                            )}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Employees */}
+        <Card className="shadow-xl">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="w-5 h-5 text-primary" />
+              Сотрудники с высоким риском
+            </CardTitle>
+            <CardDescription>Мониторинг и поддержка</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {sortedEmployees.map((emp) => (
+                <div key={emp.id} className="flex items-center justify-between p-4 border border-border rounded-lg hover:bg-accent/50 transition-colors">
+                  <div className="flex items-center gap-4 flex-1">
+                    <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-medium">
+                      {emp.name.split(' ').map(n => n[0]).join('')}
                     </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="shadow-lg scroll-mt-8">
-              <CardHeader>
-                <CardTitle>Анализ по отделам</CardTitle>
-                <CardDescription>Детальная статистика по каждому отделу</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {departmentData.map((dept, index) => {
-                    const burnoutPercentage = ((dept.burnedOut / dept.employees) * 100).toFixed(1);
-                    return (
-                      <Card key={index} className="border-2 border-border hover:border-primary/50 transition-all">
-                        <CardHeader className="pb-4">
-                          <CardTitle className="text-lg">{dept.department}</CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                          {/* Total Employees */}
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-muted-foreground">Количество сотрудников</span>
-                            <span className="text-lg">{dept.employees}</span>
-                          </div>
-                          
-                          {/* Average Score */}
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-muted-foreground">Средняя оценка</span>
-                            <span className="text-lg text-primary">{dept.score}</span>
-                          </div>
-                          
-                          {/* Department KPI */}
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-muted-foreground">KPI отдела</span>
-                            <span className="text-lg text-primary">{dept.kpi}%</span>
-                          </div>
-                          
-                          {/* Burned Out Count */}
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-muted-foreground">Выгоревших сотрудников</span>
-                            <span className={`text-lg ${dept.burnedOut > 0 ? 'text-destructive' : 'text-primary'}`}>
-                              {dept.burnedOut}
-                            </span>
-                          </div>
-                          
-                          {/* Burnout Percentage */}
-                          <div className="space-y-2">
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm text-muted-foreground">Процент выгорания</span>
-                              <span className={`text-lg ${parseFloat(burnoutPercentage) > 15 ? 'text-destructive' : 'text-primary'}`}>
-                                {burnoutPercentage}%
-                              </span>
-                            </div>
-                            <div className="h-2 bg-muted rounded-full overflow-hidden">
-                              <div 
-                                className={`h-full rounded-full transition-all ${parseFloat(burnoutPercentage) > 15 ? 'bg-destructive' : 'bg-primary'}`}
-                                style={{ width: `${burnoutPercentage}%` }}
-                              />
-                            </div>
-                          </div>
-                          
-                          {/* Monthly Trend */}
-                          <div className="flex items-center justify-between pt-2 border-t border-border">
-                            <span className="text-sm text-muted-foreground">Тенденция за месяц</span>
-                            <div className="flex items-center gap-1.5">
-                              {dept.trend > 0 ? (
-                                <>
-                                  <TrendingUp className="w-4 h-4 text-primary" />
-                                  <span className="text-sm text-primary">+{dept.trend}</span>
-                                </>
-                              ) : dept.trend < 0 ? (
-                                <>
-                                  <TrendingDown className="w-4 h-4 text-destructive" />
-                                  <span className="text-sm text-destructive">{dept.trend}</span>
-                                </>
-                              ) : (
-                                <span className="text-sm text-muted-foreground">0</span>
-                              )}
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Add Employee Modal */}
-          <Dialog open={showAddEmployeeModal} onOpenChange={setShowAddEmployeeModal}>
-            <DialogContent className="sm:max-w-[425px]">
-              <DialogHeader>
-                <DialogTitle>Добавить сотрудника</DialogTitle>
-                <DialogDescription>Введите информацию о новом сотруднике</DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-4 py-4">
-                <div className="grid grid-cols-4 items-center gap-4">
-                  <Label htmlFor="name">Имя</Label>
-                  <Input
-                    id="name"
-                    value={newEmployee.name}
-                    onChange={(e) => setNewEmployee({ ...newEmployee, name: e.target.value })}
-                    className="col-span-3"
-                  />
-                </div>
-                <div className="grid grid-cols-4 items-center gap-4">
-                  <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    value={newEmployee.email}
-                    onChange={(e) => setNewEmployee({ ...newEmployee, email: e.target.value })}
-                    className="col-span-3"
-                  />
-                </div>
-                <div className="grid grid-cols-4 items-center gap-4">
-                  <Label htmlFor="department">Отдел</Label>
-                  <div className="col-span-3">
-                    <Select
-                      value={newEmployee.department}
-                      onValueChange={(value) => setNewEmployee({ ...newEmployee, department: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Выберите отдел" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {departmentData.map((dept) => (
-                          <SelectItem key={dept.department} value={dept.department}>
-                            <div className="flex items-center justify-between w-full gap-3">
-                              <div className="flex items-center gap-2">
-                                <Building2 className="w-4 h-4 text-primary" />
-                                <span>{dept.department}</span>
-                              </div>
-                              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                <Users className="w-3 h-3" />
-                                <span>{dept.employees} чел.</span>
-                              </div>
-                            </div>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="font-medium">{emp.name}</h4>
+                          <p className="text-sm text-muted-foreground">{emp.department}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-medium">{emp.score}</p>
+                          <p className="text-xs text-muted-foreground">{emp.lastAssessment}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {getStatusBadge(emp.status)}
+                    <Button variant="ghost" size="sm" onClick={() => {
+                      setEditEmployee(emp);
+                      setShowEditEmployeeModal(true);
+                    }}>
+                      <Edit className="w-4 h-4" />
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => handleDeleteEmployee(emp.id)}>
+                      <Trash2 className="w-4 h-4 text-destructive" />
+                    </Button>
                   </div>
                 </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      </main>
+
+      {/* Add Employee Modal */}
+      <Dialog open={showAddEmployeeModal} onOpenChange={setShowAddEmployeeModal}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Добавить сотрудника</DialogTitle>
+            <DialogDescription>Введите информацию о новом сотруднике</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                value={newEmployee.email}
+                onChange={(e) => setNewEmployee({ ...newEmployee, email: e.target.value })}
+                className="col-span-3"
+              />
+            </div>
+            
+          </div>
+          <div className="flex justify-end">
+            <Button onClick={handleAddEmployee}>
+              Добавить
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Employee Modal */}
+      <Dialog open={showEditEmployeeModal} onOpenChange={setShowEditEmployeeModal}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Редактировать сотрудника</DialogTitle>
+            <DialogDescription>Измените информацию о сотруднике</DialogDescription>
+          </DialogHeader>
+          {editEmployee && (
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="edit-name">Имя</Label>
+                <Input
+                  id="edit-name"
+                  value={editEmployee.name}
+                  onChange={(e) => setEditEmployee({ ...editEmployee, name: e.target.value })}
+                  className="col-span-3"
+                />
               </div>
-              <div className="flex justify-end">
-                <Button
-                  type="submit"
-                  onClick={handleAddEmployee}
-                >
-                  Добавить
-                </Button>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="edit-email">Email</Label>
+                <Input
+                  id="edit-email"
+                  value={editEmployee.email}
+                  onChange={(e) => setEditEmployee({ ...editEmployee, email: e.target.value })}
+                  className="col-span-3"
+                />
               </div>
-            </DialogContent>
-          </Dialog>
-        </main>
-      </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="edit-department">Отдел</Label>
+                <div className="col-span-3">
+                  <Input
+                    id="edit-department"
+                    value={editEmployee.department}
+                    onChange={(e) => setEditEmployee({ ...editEmployee, department: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+          <div className="flex justify-end">
+            <Button onClick={handleEditEmployee}>
+              Сохранить
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <AIMascot message="Привет! Я помогу вам проанализировать тренды благополучия." />
     </>
   );
