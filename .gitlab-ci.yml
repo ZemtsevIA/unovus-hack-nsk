@@ -1,0 +1,16 @@
+stages:
+  - deploy
+
+.default-docker:
+  image: docker:27.0.3
+  before_script:
+    - docker info
+    - docker compose version || docker --help
+
+deploy:
+  stage: deploy
+  extends: .default-docker
+  script:
+    - docker compose -f docker-compose.yml up -d --build --remove-orphans
+  only:
+    - master

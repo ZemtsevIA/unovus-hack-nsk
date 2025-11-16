@@ -1,11 +1,63 @@
+# Запуск приложения в Docker
 
-  # Design Wellness Dashboard
+## 1. Установка Docker
 
-  This is a code bundle for Design Wellness Dashboard. The original project is available at https://www.figma.com/design/EBeTFiTcxlmQINkTM6xOOn/Design-Wellness-Dashboard.
+1. Скачайте и установите Docker Desktop с официального сайта:  
+   https://www.docker.com/
+2. После установки при необходимости перезагрузите компьютер и запустите Docker.
 
-  ## Running the code
+## 2. Получение проекта
 
-  Run `npm i` to install the dependencies.
+Склонируйте репозиторий или скачайте архив с кодом:
 
-  Run `npm run dev` to start the development server.
-  
+```bash
+git clone https://git.truetecharena.ru/sistema-xak-novosibirsk-22/truetecharena1763104868-team-19984/repozitorij-dlya-raboty-334
+cd <папка_проекта>
+```
+
+Либо распакуйте архив и перейдите в папку проекта.
+
+## 3. Сборка Docker-образа
+
+В корне проекта (там, где находится `Dockerfile`) выполните:
+
+```bash
+docker build -t <имя_образа> .
+```
+
+Пример:
+
+```bash
+docker build -t my-app .
+```
+
+## 4. Запуск контейнера
+
+Базовый пример запуска:
+
+```bash
+docker run --rm -p 8000:8000 my-app
+```
+
+- `-p 8000:8000` — проброс порта (снаружи:внутри контейнера).
+- Замените порты и имя образа в соответствии с настройками вашего проекта.
+
+После запуска откройте в браузере:
+
+```text
+http://localhost:8000
+```
+
+(или используйте другой порт, если указали его в `-p`).
+
+---
+
+## Альтернатива: docker-compose
+
+Если в проекте используется файл `docker-compose.yml`, можно запускать так:
+
+```bash
+docker compose up --build
+```
+
+После успешного запуска откройте в браузере указанный в проекте порт (например `http://localhost:8000`).

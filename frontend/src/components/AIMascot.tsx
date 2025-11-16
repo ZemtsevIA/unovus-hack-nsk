@@ -32,17 +32,17 @@ export function AIMascot({ message = "Привет! Я здесь, чтобы п
 
     try {
       
-      const response = await fetch("https://dodoswrkflw.app.n8n.cloud/webhook-test/245584b3-4dd0-4467-b429-95e3581722d4", { 
+      const response = await fetch("https://dodoswrkflw.app.n8n.cloud/webhook/f70949fd-7e82-450c-b382-f6988cf18c0b", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: chatMessage }), 
+        body: JSON.stringify({ chatInput: chatMessage }),
       });
 
       if (!response.ok) throw new Error("Ошибка запроса");
 
       const data = await response.json();
       
-      setChatHistory((prev) => [...prev, { role: "bot", text: data.response || "Извините, произошла ошибка." }]);
+      setChatHistory((prev) => [...prev, { role: "bot", text: data[0].answer || "Извините, произошла ошибка." }]);
     } catch (error) {
       console.error(error);
       setChatHistory((prev) => [...prev, { role: "bot", text: "Ошибка связи с сервером." }]);

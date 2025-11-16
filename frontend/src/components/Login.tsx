@@ -47,7 +47,7 @@ const departmentOptions = [
   "HR"
 ];
 
-const API_BASE_URL = 'http://localhost:8000'; // Замените на реальный URL backend
+const API_BASE_URL = 'http://localhost:8000';
 
 export function Login({ onLogin }: LoginProps) {
   const [mode, setMode] = useState<'login' | 'register'>('login');

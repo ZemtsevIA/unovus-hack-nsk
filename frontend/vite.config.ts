@@ -64,6 +64,7 @@
     },
     server: {
       port: 3000,
-      open: true,
+      open: false,
+      allowedHosts: ["it-academy-is.space", "academus-pobeda.ru"],
     },
   });

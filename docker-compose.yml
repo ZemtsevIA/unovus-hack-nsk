@@ -1,0 +1,51 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: wellness-db
+    environment:
+      POSTGRES_DB: wellness_db
+      POSTGRES_USER: wellness_user
+      POSTGRES_PASSWORD: wellness_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: wellness-backend
+    ports:
+      - "8000:8000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8000
+      DB_URL: postgresql+asyncpg://wellness_user:wellness_password@db:5432/wellness_db
+    depends_on:
+      - db
+    command: >
+      sh -c "alembic upgrade head && (python -m backend.fixtures.roles || true) && uvicorn backend.main:app --host 0.0.0.0 --port 8000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: wellness-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+
+networks:
+  default:
+    name: wellness-network
+
+volumes:
+  db_data:
